@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 interface EditorPaneProps {
   media: MediaDetails | null;
   onSelectTrack: (subtitleTrackId: string) => Promise<void>;
+  preferAdaptiveStream: boolean;
   session: SessionSummary | null;
   onSessionChange: (session: SessionSummary) => void;
   selectedTrackId: string | null;
@@ -23,11 +24,68 @@ function subtitleLabel(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export function EditorPane({ media, onSelectTrack, session, onSessionChange, selectedTrackId }: EditorPaneProps) {
+export function EditorPane({ media, onSelectTrack, preferAdaptiveStream, session, onSessionChange, selectedTrackId }: EditorPaneProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [cuePreview, setCuePreview] = useState<CuePreview | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session || !videoRef.current) {
+      return;
+    }
+
+    let disposed = false;
+    let hlsInstance: { destroy: () => void } | null = null;
+    const video = videoRef.current;
+
+    async function attachPreview() {
+      if (!video) {
+        return;
+      }
+
+      if (!preferAdaptiveStream) {
+        video.src = `/api/stream/${session.sessionId}`;
+        return;
+      }
+
+      const manifestUrl = `/api/stream/${session.sessionId}/master.m3u8`;
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = manifestUrl;
+        return;
+      }
+
+      const Hls = (await import('hls.js')).default;
+      if (disposed || !Hls.isSupported()) {
+        video.src = `/api/stream/${session.sessionId}`;
+        return;
+      }
+
+      const hls = new Hls({
+        maxBufferLength: 8,
+        backBufferLength: 8
+      });
+      hls.loadSource(manifestUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          setError(`Preview playback failed: ${data.details}`);
+        }
+      });
+      hlsInstance = hls;
+    }
+
+    void attachPreview();
+
+    return () => {
+      disposed = true;
+      hlsInstance?.destroy();
+      if (video) {
+        video.removeAttribute('src');
+        video.load();
+      }
+    };
+  }, [preferAdaptiveStream, session]);
 
   useEffect(() => {
     if (!session) {
@@ -82,14 +140,12 @@ export function EditorPane({ media, onSelectTrack, session, onSessionChange, sel
     }
   }
 
-  const streamUrl = `/api/stream/${session.sessionId}`;
-
   return (
     <section className="panel editor-grid">
       <div className="video-column">
         <p className="eyebrow">Preview</p>
         <div className="video-frame">
-          <video controls ref={videoRef} src={streamUrl} className="video-player" />
+          <video controls ref={videoRef} className="video-player" />
           <div className="subtitle-overlay">{cuePreview?.activeCue?.text ?? ' '}</div>
         </div>
         <div className="replay-row">

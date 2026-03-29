@@ -133,6 +133,7 @@ export default function App() {
         <EditorPane
           media={selectedMedia}
           onSelectTrack={changeSelectedTrack}
+          preferAdaptiveStream={health?.mode === 'live'}
           onSessionChange={setSession}
           selectedTrackId={selectedTrackId}
           session={session}

@@ -37,6 +37,27 @@ const MOCK_ITEMS: BrowseItem[] = [
 export class JellyfinClient {
   constructor(private readonly config: AppConfig) {}
 
+  private createPreviewQuery(mediaSourceId: string | null): URLSearchParams {
+    const query = new URLSearchParams({
+      static: 'false',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      allowVideoStreamCopy: 'false',
+      allowAudioStreamCopy: 'false',
+      maxWidth: '854',
+      maxHeight: '480',
+      videoBitRate: '1200000',
+      audioBitRate: '128000',
+      maxFramerate: '24'
+    });
+
+    if (mediaSourceId) {
+      query.set('mediaSourceId', mediaSourceId);
+    }
+
+    return query;
+  }
+
   async listLibraries(): Promise<Library[]> {
     if (this.config.useMockData) {
       return MOCK_LIBRARY;
@@ -144,24 +165,11 @@ export class JellyfinClient {
     };
   }
 
-  async requestVideoStream(itemId: string, mediaSourceId: string | null, range?: string): Promise<Response> {
-    const query = new URLSearchParams({
-      static: 'false',
-      videoCodec: 'h264',
-      audioCodec: 'aac',
-      allowVideoStreamCopy: 'true',
-      allowAudioStreamCopy: 'true',
-      maxWidth: '854',
-      maxHeight: '480',
-      videoBitRate: '1200000',
-      audioBitRate: '128000',
-      maxFramerate: '24'
-    });
+  getVideoPlaylistPath(itemId: string, mediaSourceId: string | null): string {
+    return `/Videos/${itemId}/master.m3u8?${this.createPreviewQuery(mediaSourceId).toString()}`;
+  }
 
-    if (mediaSourceId) {
-      query.set('mediaSourceId', mediaSourceId);
-    }
-
+  async requestPlaybackResource(pathAndQuery: string, range?: string): Promise<Response> {
     const headers: Record<string, string> = {
       'X-Emby-Token': this.config.jellyfinApiKey
     };
@@ -169,12 +177,12 @@ export class JellyfinClient {
       headers.range = range;
     }
 
-    const response = await fetch(`${this.config.jellyfinBaseUrl}/Videos/${itemId}/stream.mp4?${query.toString()}`, {
+    const response = await fetch(`${this.config.jellyfinBaseUrl}${pathAndQuery}`, {
       headers
     });
 
     if (!response.ok) {
-      throw new Error(`Jellyfin stream request failed with ${response.status} ${response.statusText}`);
+      throw new Error(`Jellyfin playback request failed with ${response.status} ${response.statusText}`);
     }
 
     return response;
