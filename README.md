@@ -27,14 +27,15 @@
 4. Run `npm run dev`.
 5. Open `http://localhost:5173`.
 
-The Vite dev server proxies API requests to the backend on `http://localhost:3001`.
+The Vite dev server proxies API requests to the backend on `http://localhost:$APP_PORT`.
+By default, `.env.example` sets `APP_PORT=3001`.
 Mock mode includes a tiny bundled MP4 so the editor can preview playback without a real Jellyfin-backed media file.
 
 ## Test on your machine
 
 ### Fastest local smoke test
 
-1. `cd /Users/albertwei/workspace/subalignarr`
+1. `cd /path/to/subalignarr`
 2. `cp .env.example .env`
 3. In `.env`, keep `USE_MOCK_DATA=true`
 4. `npm install`
@@ -51,7 +52,7 @@ Mock mode includes a tiny bundled MP4 so the editor can preview playback without
 
 ### Production-style local run
 
-1. `cd /Users/albertwei/workspace/subalignarr`
+1. `cd /path/to/subalignarr`
 2. `cp .env.example .env`
 3. Set `USE_MOCK_DATA=true`
 4. `npm install`
@@ -61,7 +62,7 @@ Mock mode includes a tiny bundled MP4 so the editor can preview playback without
 
 ### Test against your real Jellyfin instance
 
-1. `cd /Users/albertwei/workspace/subalignarr`
+1. `cd /path/to/subalignarr`
 2. `cp .env.example .env`
 3. Set:
    - `USE_MOCK_DATA=false`
@@ -75,11 +76,13 @@ Mock mode includes a tiny bundled MP4 so the editor can preview playback without
 
 ### Docker test
 
-1. `cd /Users/albertwei/workspace/subalignarr`
+1. `cd /path/to/subalignarr`
 2. `cp .env.example .env`
 3. Adjust `.env` and `docker-compose.yml` volume mounts for your machine
 4. `docker compose up --build`
-5. Open `http://localhost:3000`
+5. Open `http://localhost:3033`
+
+The Compose file maps host port `3033` to container port `3000`, and overrides `APP_PORT=3000` inside the container.
 
 ## Production
 
