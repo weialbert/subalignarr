@@ -23,6 +23,8 @@ interface JellyfinItemResponse {
   }>;
 }
 
+const BROWSABLE_ITEM_TYPES = new Set(['Folder', 'Series', 'Season', 'BoxSet', 'Playlist']);
+
 const MOCK_LIBRARY: Library[] = [{ id: 'mock-library', name: 'Mock Library' }];
 
 const MOCK_ITEMS: BrowseItem[] = [
@@ -64,7 +66,7 @@ export class JellyfinClient {
       ParentId: parentId ?? '',
       Recursive: 'false',
       Fields: 'Path,MediaSources',
-      IncludeItemTypes: 'Movie,Episode,Folder',
+      IncludeItemTypes: 'Movie,Episode,Folder,Series,Season,BoxSet,Playlist',
       SortBy: 'SortName'
     });
     const response = await this.request<{ Items: JellyfinItemResponse[] }>(
@@ -75,7 +77,7 @@ export class JellyfinClient {
       id: item.Id,
       parentId: item.ParentId ?? parentId ?? null,
       title: item.Name,
-      type: item.Type === 'Folder' ? 'folder' : 'video',
+      type: BROWSABLE_ITEM_TYPES.has(item.Type ?? '') ? 'folder' : 'video',
       durationMs: item.RunTimeTicks ? Math.floor(item.RunTimeTicks / 10_000) : undefined
     }));
   }
