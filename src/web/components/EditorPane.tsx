@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { CuePreview, SessionSummary } from '../../shared/types';
+import { CuePreview, MediaDetails, SessionSummary } from '../../shared/types';
 import { api } from '../lib/api';
 
 interface EditorPaneProps {
+  media: MediaDetails | null;
+  onSelectTrack: (subtitleTrackId: string) => Promise<void>;
   session: SessionSummary | null;
   onSessionChange: (session: SessionSummary) => void;
+  selectedTrackId: string | null;
 }
 
 const SLIDER_MIN = -10000;
@@ -15,7 +18,12 @@ function msLabel(value: number): string {
   return `${sign}${value} ms`;
 }
 
-export function EditorPane({ session, onSessionChange }: EditorPaneProps) {
+function subtitleLabel(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+export function EditorPane({ media, onSelectTrack, session, onSessionChange, selectedTrackId }: EditorPaneProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [cuePreview, setCuePreview] = useState<CuePreview | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -118,6 +126,30 @@ export function EditorPane({ session, onSessionChange }: EditorPaneProps) {
           </div>
           <span className="type-pill">{session.subtitleTrack.language ?? 'unknown'}</span>
         </div>
+
+        {media ? (
+          <div className="offset-card">
+            <label htmlFor="subtitle-track-select">Subtitle selected for editing</label>
+            <select
+              id="subtitle-track-select"
+              value={selectedTrackId ?? ''}
+              onChange={(event) => void onSelectTrack(event.target.value)}
+            >
+              {media.subtitleTracks.map((track) => (
+                <option key={track.id} value={track.id} disabled={!track.isEditable}>
+                  {`${track.language ?? 'unknown'} • ${track.format} • ${subtitleLabel(track.path)}`}
+                </option>
+              ))}
+            </select>
+            <p>{session.subtitleTrack.path}</p>
+            {media.subtitleTracks.some((track) => !track.isEditable) ? (
+              <p className="error-text">
+                Only subtitle files physically stored alongside mapped media files are supported. Metadata-managed subtitle paths are
+                shown but cannot be edited.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="offset-card">
           <label htmlFor="offset-slider">Global offset</label>

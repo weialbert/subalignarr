@@ -10,6 +10,7 @@ export default function App() {
   const [items, setItems] = useState<BrowseItem[]>([]);
   const [currentParentId, setCurrentParentId] = useState<string | undefined>();
   const [selectedMedia, setSelectedMedia] = useState<MediaDetails | null>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [session, setSession] = useState<SessionSummary | null>(null);
   const [isLoadingItems, setIsLoadingItems] = useState(false);
   const [isOpeningItem, setIsOpeningItem] = useState(false);
@@ -32,6 +33,7 @@ export default function App() {
       setError(null);
       setCurrentParentId(parentId);
       setSelectedMedia(null);
+      setSelectedTrackId(null);
       setSession(null);
 
       if (!parentId) {
@@ -61,15 +63,39 @@ export default function App() {
       const media = await api.getMedia(item.id);
       setSelectedMedia(media);
 
-      const preferredTrack = media.subtitleTracks.find((track) => track.format === 'srt') ?? media.subtitleTracks[0];
+      const preferredTrack =
+        media.subtitleTracks.find((track) => track.isEditable && track.format === 'srt') ??
+        media.subtitleTracks.find((track) => track.isEditable);
       if (!preferredTrack) {
-        throw new Error('No external subtitle tracks found for this media item');
+        throw new Error('No supported sidecar subtitle tracks found for this media item.');
       }
 
-      const nextSession = await api.createSession(item.id, preferredTrack.id);
-      setSession(nextSession);
+      await selectSubtitleTrack(media, preferredTrack.id);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Failed to open media item');
+    } finally {
+      setIsOpeningItem(false);
+    }
+  }
+
+  async function selectSubtitleTrack(media: MediaDetails, subtitleTrackId: string) {
+    setError(null);
+    setSelectedTrackId(subtitleTrackId);
+    const nextSession = await api.createSession(media.item.id, subtitleTrackId);
+    setSession(nextSession);
+  }
+
+  async function changeSelectedTrack(subtitleTrackId: string) {
+    if (!selectedMedia || subtitleTrackId === selectedTrackId) {
+      return;
+    }
+
+    try {
+      setError(null);
+      setIsOpeningItem(true);
+      await selectSubtitleTrack(selectedMedia, subtitleTrackId);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Failed to switch subtitle track');
     } finally {
       setIsOpeningItem(false);
     }
@@ -104,7 +130,13 @@ export default function App() {
           onOpenParent={openParent}
           onSelectItem={selectItem}
         />
-        <EditorPane onSessionChange={setSession} session={session} />
+        <EditorPane
+          media={selectedMedia}
+          onSelectTrack={changeSelectedTrack}
+          onSessionChange={setSession}
+          selectedTrackId={selectedTrackId}
+          session={session}
+        />
       </div>
 
       {selectedMedia ? (

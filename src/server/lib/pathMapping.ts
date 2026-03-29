@@ -1,6 +1,14 @@
 import path from 'node:path';
 import { PathMapping } from '../config.js';
 
+export function hasMatchingMapping(jellyfinPath: string, mappings: PathMapping[]): boolean {
+  const normalizedSource = path.posix.normalize(jellyfinPath);
+
+  return mappings.some(
+    (mapping) => normalizedSource === mapping.jellyfinPrefix || normalizedSource.startsWith(`${mapping.jellyfinPrefix}/`)
+  );
+}
+
 export function resolveLocalPath(jellyfinPath: string, mappings: PathMapping[]): string {
   const normalizedSource = path.posix.normalize(jellyfinPath);
 

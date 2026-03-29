@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import express from 'express';
 import { applyOffset, getCuePreview } from './lib/alignment.js';
 import { JellyfinClient } from './lib/jellyfinClient.js';
@@ -200,9 +201,28 @@ app.post('/api/sessions/:sessionId/save', async (request, response) => {
 app.get('/api/stream/:sessionId', async (request, response) => {
   try {
     const session = sessions.toSummary(request.params.sessionId);
-    const resolvedMediaPath = config.useMockData
-      ? path.join(process.cwd(), 'public', 'mock-video.mp4')
-      : resolveLocalPath(session.media.mediaPath, config.pathMappings);
+    if (!config.useMockData) {
+      const upstream = await jellyfin.requestVideoStream(session.media.item.id, session.media.mediaSourceId, request.headers.range);
+      const passthroughHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
+
+      for (const headerName of passthroughHeaders) {
+        const value = upstream.headers.get(headerName);
+        if (value) {
+          response.setHeader(headerName, value);
+        }
+      }
+
+      response.status(upstream.status);
+      if (!upstream.body) {
+        response.end();
+        return;
+      }
+
+      Readable.fromWeb(upstream.body).pipe(response);
+      return;
+    }
+
+    const resolvedMediaPath = path.join(process.cwd(), 'public', 'mock-video.mp4');
 
     const stats = await fs.stat(resolvedMediaPath);
     const range = request.headers.range;

@@ -19,11 +19,14 @@ export interface SubtitleTrack {
   language: string | null;
   format: string;
   isExternal: boolean;
+  isEditable: boolean;
+  warning?: string;
 }
 
 export interface MediaDetails {
   item: BrowseItem;
   mediaPath: string;
+  mediaSourceId: string | null;
   subtitleTracks: SubtitleTrack[];
 }
 
@@ -59,4 +62,3 @@ export interface HealthResponse {
     pathMappingCount: number;
   };
 }
-

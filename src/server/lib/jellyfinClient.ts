@@ -1,5 +1,6 @@
 import { BrowseItem, Library, MediaDetails, SubtitleTrack } from '../../shared/types.js';
 import { AppConfig } from '../config.js';
+import { hasMatchingMapping } from './pathMapping.js';
 
 interface JellyfinItemResponse {
   Id: string;
@@ -95,19 +96,22 @@ export class JellyfinClient {
           path: `/media/${item.title}/subtitle.en.srt`,
           language: 'eng',
           format: 'srt',
-          isExternal: true
+          isExternal: true,
+          isEditable: true
         }
       ];
 
       return {
         item,
         mediaPath: `/media/${item.title}/${item.title}.mp4`,
+        mediaSourceId: item.id,
         subtitleTracks
       };
     }
 
     const response = await this.request<JellyfinItemResponse>(`/Users/${this.config.jellyfinUserId}/Items/${itemId}`);
-    const mediaPath = response.Path ?? response.MediaSources?.[0]?.Path;
+    const mediaSource = response.MediaSources?.[0];
+    const mediaPath = response.Path ?? mediaSource?.Path;
     if (!mediaPath) {
       throw new Error(`No media path found for item ${itemId}`);
     }
@@ -119,7 +123,11 @@ export class JellyfinClient {
         path: stream.Path as string,
         language: stream.Language ?? null,
         format: stream.Codec ?? 'srt',
-        isExternal: true
+        isExternal: true,
+        isEditable: hasMatchingMapping(stream.Path as string, this.config.pathMappings),
+        warning: hasMatchingMapping(stream.Path as string, this.config.pathMappings)
+          ? undefined
+          : 'Unsupported subtitle path. Only sidecar subtitles stored alongside mapped media files can be edited.'
       }));
 
     return {
@@ -131,8 +139,45 @@ export class JellyfinClient {
         durationMs: response.RunTimeTicks ? Math.floor(response.RunTimeTicks / 10_000) : undefined
       },
       mediaPath,
+      mediaSourceId: mediaSource?.Id ?? null,
       subtitleTracks
     };
+  }
+
+  async requestVideoStream(itemId: string, mediaSourceId: string | null, range?: string): Promise<Response> {
+    const query = new URLSearchParams({
+      static: 'false',
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      allowVideoStreamCopy: 'true',
+      allowAudioStreamCopy: 'true',
+      maxWidth: '854',
+      maxHeight: '480',
+      videoBitRate: '1200000',
+      audioBitRate: '128000',
+      maxFramerate: '24'
+    });
+
+    if (mediaSourceId) {
+      query.set('mediaSourceId', mediaSourceId);
+    }
+
+    const headers: Record<string, string> = {
+      'X-Emby-Token': this.config.jellyfinApiKey
+    };
+    if (range) {
+      headers.range = range;
+    }
+
+    const response = await fetch(`${this.config.jellyfinBaseUrl}/Videos/${itemId}/stream.mp4?${query.toString()}`, {
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`Jellyfin stream request failed with ${response.status} ${response.statusText}`);
+    }
+
+    return response;
   }
 
   private async request<T>(path: string): Promise<T> {
