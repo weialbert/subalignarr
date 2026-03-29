@@ -1,0 +1,15 @@
+services:
+  subalignarr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: subalignarr
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - APP_PORT=3000
+    volumes:
+      - /mnt/nas-storage/media-data/media:/mnt/media
+    restart: unless-stopped

@@ -1,0 +1,180 @@
+import { useEffect, useRef, useState } from 'react';
+import { CuePreview, SessionSummary } from '../../shared/types';
+import { api } from '../lib/api';
+
+interface EditorPaneProps {
+  session: SessionSummary | null;
+  onSessionChange: (session: SessionSummary) => void;
+}
+
+const SLIDER_MIN = -10000;
+const SLIDER_MAX = 10000;
+
+function msLabel(value: number): string {
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value} ms`;
+}
+
+export function EditorPane({ session, onSessionChange }: EditorPaneProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [cuePreview, setCuePreview] = useState<CuePreview | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session) {
+      setCuePreview(null);
+      return;
+    }
+
+    const interval = window.setInterval(async () => {
+      const currentTime = videoRef.current?.currentTime ?? 0;
+      try {
+        const nextPreview = await api.getCuePreview(session.sessionId, currentTime * 1000);
+        setCuePreview(nextPreview);
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : 'Failed to refresh subtitles');
+      }
+    }, 250);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [session]);
+
+  if (!session) {
+    return (
+      <section className="panel panel-empty">
+        <p className="eyebrow">Editor</p>
+        <h2>Select a video and subtitle track to begin.</h2>
+      </section>
+    );
+  }
+
+  async function updateOffset(offsetMs: number) {
+    try {
+      setError(null);
+      const updated = await api.updateOffset(session.sessionId, offsetMs);
+      onSessionChange(updated);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Failed to update offset');
+    }
+  }
+
+  async function saveSession() {
+    try {
+      setIsSaving(true);
+      setError(null);
+      const updated = await api.saveSession(session.sessionId);
+      onSessionChange(updated);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Failed to save subtitle file');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const streamUrl = `/api/stream/${session.sessionId}`;
+
+  return (
+    <section className="panel editor-grid">
+      <div className="video-column">
+        <p className="eyebrow">Preview</p>
+        <div className="video-frame">
+          <video controls ref={videoRef} src={streamUrl} className="video-player" />
+          <div className="subtitle-overlay">{cuePreview?.activeCue?.text ?? ' '}</div>
+        </div>
+        <div className="replay-row">
+          <button
+            className="ghost-button"
+            onClick={() => {
+              if (videoRef.current) {
+                videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 5);
+              }
+            }}
+            type="button"
+          >
+            Back 5s
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => {
+              if (videoRef.current) {
+                videoRef.current.currentTime += 5;
+              }
+            }}
+            type="button"
+          >
+            Forward 5s
+          </button>
+        </div>
+      </div>
+
+      <div className="control-column">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Track</p>
+            <h2>{session.media.item.title}</h2>
+          </div>
+          <span className="type-pill">{session.subtitleTrack.language ?? 'unknown'}</span>
+        </div>
+
+        <div className="offset-card">
+          <label htmlFor="offset-slider">Global offset</label>
+          <div className="offset-readout">{msLabel(session.offsetMs)}</div>
+          <input
+            id="offset-slider"
+            type="range"
+            min={SLIDER_MIN}
+            max={SLIDER_MAX}
+            step={50}
+            value={Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, session.offsetMs))}
+            onChange={(event) => updateOffset(Number(event.target.value))}
+          />
+          <div className="nudge-row">
+            {[-500, -100, 100, 500].map((delta) => (
+              <button key={delta} className="ghost-button" onClick={() => updateOffset(session.offsetMs + delta)} type="button">
+                {delta > 0 ? `+${delta}` : delta}ms
+              </button>
+            ))}
+            <button className="ghost-button" onClick={() => updateOffset(0)} type="button">
+              Reset
+            </button>
+          </div>
+          <label htmlFor="offset-input">Offset in milliseconds</label>
+          <input
+            id="offset-input"
+            type="number"
+            value={session.offsetMs}
+            onChange={(event) => updateOffset(Number(event.target.value))}
+          />
+        </div>
+
+        <div className="cue-stack">
+          <div>
+            <p className="cue-label">Previous</p>
+            <p>{cuePreview?.previousCue?.text ?? 'None'}</p>
+          </div>
+          <div>
+            <p className="cue-label">Current</p>
+            <p>{cuePreview?.activeCue?.text ?? 'None'}</p>
+          </div>
+          <div>
+            <p className="cue-label">Next</p>
+            <p>{cuePreview?.nextCue?.text ?? 'None'}</p>
+          </div>
+        </div>
+
+        <div className="save-card">
+          <p className="cue-label">Output</p>
+          <p>{session.savedOutputPath ?? `${session.subtitleTrack.path} -> .aligned.srt`}</p>
+          <button className="primary-button" disabled={isSaving} onClick={() => void saveSession()} type="button">
+            {isSaving ? 'Saving...' : 'Save corrected subtitle'}
+          </button>
+        </div>
+
+        {error ? <p className="error-text">{error}</p> : null}
+      </div>
+    </section>
+  );
+}
