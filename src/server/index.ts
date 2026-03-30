@@ -1,10 +1,10 @@
 import fs from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import express from 'express';
 import { applyOffset, getCuePreview } from './lib/alignment.js';
 import { JellyfinClient } from './lib/jellyfinClient.js';
+import { PreviewStore } from './lib/previewStore.js';
 import { resolveLocalPath } from './lib/pathMapping.js';
 import { SessionStore } from './lib/sessionStore.js';
 import { parseSrt, serializeSrt } from './lib/srt.js';
@@ -13,6 +13,7 @@ import { loadConfig } from './config.js';
 const app = express();
 const config = loadConfig();
 const jellyfin = new JellyfinClient(config);
+const previews = new PreviewStore();
 const sessions = new SessionStore();
 
 app.use(express.json());
@@ -40,67 +41,38 @@ function inferMimeType(filePath: string): string {
   }
 }
 
-function buildProxyPath(sessionId: string, upstreamPathAndQuery: string): string {
-  return `/api/stream/${sessionId}/proxy?upstream=${encodeURIComponent(upstreamPathAndQuery)}`;
-}
+async function streamFile(filePath: string, request: express.Request, response: express.Response): Promise<void> {
+  const stats = await fs.stat(filePath);
+  const range = request.headers.range;
+  const mimeType = inferMimeType(filePath);
 
-function resolveUpstreamPath(basePathAndQuery: string, nextPath: string, jellyfinBaseUrl: string): string {
-  const resolved = new URL(nextPath, new URL(basePathAndQuery, jellyfinBaseUrl));
-  const serverBase = new URL(jellyfinBaseUrl);
-  if (resolved.origin !== serverBase.origin) {
-    throw new Error('Resolved playback path escaped Jellyfin origin');
-  }
-
-  return `${resolved.pathname}${resolved.search}`;
-}
-
-function rewritePlaylist(sessionId: string, playlist: string, basePathAndQuery: string, jellyfinBaseUrl: string): string {
-  return playlist
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) {
-        return line;
-      }
-
-      return buildProxyPath(sessionId, resolveUpstreamPath(basePathAndQuery, trimmed, jellyfinBaseUrl));
-    })
-    .join('\n');
-}
-
-async function proxyPlaybackResponse(
-  sessionId: string,
-  upstreamPathAndQuery: string,
-  range: string | undefined,
-  response: express.Response
-): Promise<void> {
-  const upstream = await jellyfin.requestPlaybackResource(upstreamPathAndQuery, range);
-  const contentType = upstream.headers.get('content-type') ?? '';
-  const isPlaylist = contentType.includes('mpegurl') || upstreamPathAndQuery.includes('.m3u8');
-
-  if (isPlaylist) {
-    const playlist = await upstream.text();
-    response.status(upstream.status);
-    response.setHeader('content-type', 'application/vnd.apple.mpegurl');
-    response.send(rewritePlaylist(sessionId, playlist, upstreamPathAndQuery, config.jellyfinBaseUrl));
+  if (!range) {
+    response.writeHead(200, {
+      'Content-Length': stats.size,
+      'Content-Type': mimeType,
+      'Accept-Ranges': 'bytes'
+    });
+    createReadStream(filePath).pipe(response);
     return;
   }
 
-  const passthroughHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
-  for (const headerName of passthroughHeaders) {
-    const value = upstream.headers.get(headerName);
-    if (value) {
-      response.setHeader(headerName, value);
-    }
-  }
-
-  response.status(upstream.status);
-  if (!upstream.body) {
-    response.end();
+  const match = /bytes=(\d+)-(\d*)/.exec(range);
+  if (!match) {
+    response.status(416).end();
     return;
   }
 
-  Readable.fromWeb(upstream.body).pipe(response);
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : stats.size - 1;
+
+  response.writeHead(206, {
+    'Content-Range': `bytes ${start}-${end}/${stats.size}`,
+    'Accept-Ranges': 'bytes',
+    'Content-Length': end - start + 1,
+    'Content-Type': mimeType
+  });
+
+  createReadStream(filePath, { start, end }).pipe(response);
 }
 
 async function loadSubtitleFile(resolvedPath: string): Promise<string> {
@@ -195,6 +167,11 @@ app.post('/api/sessions', async (request, response) => {
     const cues = parseSrt(await loadSubtitleFile(resolvedSubtitlePath));
     const session = sessions.create(media, subtitleTrack, cues);
 
+    if (!config.useMockData) {
+      const resolvedMediaPath = resolveLocalPath(media.mediaPath, config.pathMappings);
+      void previews.ensure(resolvedMediaPath);
+    }
+
     response.status(201).json(sessions.toSummary(session.sessionId));
   } catch (error) {
     response.status(500).json(toError(error));
@@ -225,6 +202,14 @@ app.post('/api/sessions/:sessionId/offset', (request, response) => {
 });
 
 app.get('/api/sessions/:sessionId/cues', (request, response) => {
+  try {
+    response.json(sessions.getOriginalCues(request.params.sessionId));
+  } catch (error) {
+    response.status(404).json(toError(error));
+  }
+});
+
+app.get('/api/sessions/:sessionId/cue-preview', (request, response) => {
   try {
     const timeMs = Number(request.query.timeMs ?? 0);
     const session = sessions.toSummary(request.params.sessionId);
@@ -267,73 +252,55 @@ app.get('/api/stream/:sessionId', async (request, response) => {
     const resolvedMediaPath = config.useMockData
       ? path.join(process.cwd(), 'public', 'mock-video.mp4')
       : resolveLocalPath(session.media.mediaPath, config.pathMappings);
+    await streamFile(resolvedMediaPath, request, response);
+  } catch (error) {
+    response.status(500).json(toError(error));
+  }
+});
 
-    const stats = await fs.stat(resolvedMediaPath);
-    const range = request.headers.range;
-    const mimeType = inferMimeType(resolvedMediaPath);
-
-    if (!range) {
-      response.writeHead(200, {
-        'Content-Length': stats.size,
-        'Content-Type': mimeType,
-        'Accept-Ranges': 'bytes'
+app.get('/api/preview/:sessionId/status', async (request, response) => {
+  try {
+    const session = sessions.toSummary(request.params.sessionId);
+    if (config.useMockData) {
+      response.json({
+        status: 'ready',
+        streamUrl: `/api/stream/${session.sessionId}`
       });
-      createReadStream(resolvedMediaPath).pipe(response);
       return;
     }
 
-    const match = /bytes=(\d+)-(\d*)/.exec(range);
-    if (!match) {
-      response.status(416).end();
-      return;
-    }
-
-    const start = Number(match[1]);
-    const end = match[2] ? Number(match[2]) : stats.size - 1;
-
-    response.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${stats.size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': end - start + 1,
-      'Content-Type': mimeType
+    const resolvedMediaPath = resolveLocalPath(session.media.mediaPath, config.pathMappings);
+    await previews.ensure(resolvedMediaPath);
+    const status = previews.getStatus(resolvedMediaPath);
+    response.json({
+      status: status.status,
+      streamUrl: status.status === 'ready' ? `/api/preview/${session.sessionId}` : undefined,
+      errorMessage: status.errorMessage
     });
-
-    createReadStream(resolvedMediaPath, { start, end }).pipe(response);
   } catch (error) {
     response.status(500).json(toError(error));
   }
 });
 
-app.get('/api/stream/:sessionId/master.m3u8', async (request, response) => {
+app.get('/api/preview/:sessionId', async (request, response) => {
   try {
-    if (config.useMockData) {
-      response.status(404).json({ message: 'Adaptive preview is only available in live mode' });
-      return;
-    }
-
     const session = sessions.toSummary(request.params.sessionId);
-    const upstreamPath = jellyfin.getVideoPlaylistPath(session.media.item.id, session.media.mediaSourceId);
-    await proxyPlaybackResponse(session.sessionId, upstreamPath, request.headers.range, response);
-  } catch (error) {
-    response.status(500).json(toError(error));
-  }
-});
-
-app.get('/api/stream/:sessionId/proxy', async (request, response) => {
-  try {
     if (config.useMockData) {
-      response.status(404).json({ message: 'Adaptive preview is only available in live mode' });
+      await streamFile(path.join(process.cwd(), 'public', 'mock-video.mp4'), request, response);
       return;
     }
 
-    const session = sessions.toSummary(request.params.sessionId);
-    const upstream = typeof request.query.upstream === 'string' ? request.query.upstream : '';
-    if (!upstream.startsWith('/')) {
-      response.status(400).json({ message: 'Invalid upstream playback path' });
+    const resolvedMediaPath = resolveLocalPath(session.media.mediaPath, config.pathMappings);
+    await previews.ensure(resolvedMediaPath);
+    const status = previews.getStatus(resolvedMediaPath);
+    if (status.status !== 'ready' || !status.previewPath) {
+      response.status(409).json({
+        message: status.errorMessage ?? 'Preview is still preparing'
+      });
       return;
     }
 
-    await proxyPlaybackResponse(session.sessionId, upstream, request.headers.range, response);
+    await streamFile(status.previewPath, request, response);
   } catch (error) {
     response.status(500).json(toError(error));
   }

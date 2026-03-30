@@ -17,7 +17,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -162,10 +163,15 @@ input {
   font-size: 0.8rem;
 }
 
-.editor-grid {
+.editor-shell {
+  padding: 0;
+}
+
+.editor-main {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
   gap: 1.25rem;
+  padding: 1.25rem;
 }
 
 .video-frame {
@@ -182,6 +188,16 @@ input {
   background: #000;
 }
 
+.preview-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 10, 5, 0.75);
+  color: #fff4e8;
+  z-index: 1;
+}
+
 .subtitle-overlay {
   position: absolute;
   left: 1.25rem;
@@ -195,13 +211,91 @@ input {
 }
 
 .offset-card input[type="range"],
-.offset-card input[type="number"] {
+.offset-card input[type="number"],
+.offset-card input[type="search"],
+.offset-card select {
   width: 100%;
 }
 
 .offset-readout {
   font-size: 2rem;
   font-family: "IBM Plex Mono", monospace;
+}
+
+.preview-meta {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  color: #5d4b39;
+  font-size: 0.92rem;
+}
+
+.anchor-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(250, 240, 227, 0.9);
+  border: 1px solid rgba(94, 67, 39, 0.16);
+}
+
+.anchor-title {
+  margin-top: 0;
+  font-weight: 600;
+}
+
+.compact-header {
+  margin-bottom: 0.5rem;
+}
+
+.compact-header h3 {
+  margin: 0;
+  font-family: "IBM Plex Serif", Georgia, serif;
+}
+
+.cue-list {
+  display: grid;
+  gap: 0.6rem;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.cue-list-item {
+  padding: 0.7rem;
+  border-radius: 16px;
+  background: rgba(250, 240, 227, 0.8);
+  border: 1px solid transparent;
+}
+
+.cue-list-item.is-selected {
+  border-color: rgba(36, 79, 64, 0.45);
+  background: rgba(223, 241, 233, 0.9);
+}
+
+.cue-list-item.is-active {
+  box-shadow: inset 0 0 0 1px rgba(150, 85, 35, 0.35);
+}
+
+.cue-list-button {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  padding: 0;
+}
+
+.cue-timestamp {
+  font-family: "IBM Plex Mono", monospace;
+  color: #5a4734;
+  font-size: 0.85rem;
+}
+
+.cue-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .nudge-row,
@@ -233,7 +327,7 @@ input {
 
   .hero,
   .workspace-grid,
-  .editor-grid {
+  .editor-main {
     grid-template-columns: 1fr;
   }
 

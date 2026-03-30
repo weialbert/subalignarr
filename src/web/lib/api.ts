@@ -1,4 +1,4 @@
-import { BrowseItem, CuePreview, HealthResponse, Library, MediaDetails, SessionSummary } from '../../shared/types';
+import { Cue, HealthResponse, Library, MediaDetails, PreviewStatusResponse, SessionSummary, BrowseItem } from '../../shared/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -33,8 +33,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ offsetMs })
     }),
-  getCuePreview: (sessionId: string, timeMs: number) =>
-    request<CuePreview>(`/api/sessions/${sessionId}/cues?timeMs=${Math.max(0, Math.floor(timeMs))}`),
+  getSessionCues: (sessionId: string) => request<Cue[]>(`/api/sessions/${sessionId}/cues`),
+  getPreviewStatus: (sessionId: string) => request<PreviewStatusResponse>(`/api/preview/${sessionId}/status`),
   saveSession: (sessionId: string) =>
     request<SessionSummary>(`/api/sessions/${sessionId}/save`, {
       method: 'POST'

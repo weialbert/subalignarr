@@ -43,6 +43,12 @@ export interface CuePreview {
   nextCue: Cue | null;
 }
 
+export interface PreviewStatusResponse {
+  status: 'preparing' | 'ready' | 'error';
+  streamUrl?: string;
+  errorMessage?: string;
+}
+
 export interface SessionSummary {
   sessionId: string;
   media: MediaDetails;
