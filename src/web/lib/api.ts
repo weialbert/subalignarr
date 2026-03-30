@@ -34,7 +34,8 @@ export const api = {
       body: JSON.stringify({ offsetMs })
     }),
   getSessionCues: (sessionId: string) => request<Cue[]>(`/api/sessions/${sessionId}/cues`),
-  getPreviewStatus: (sessionId: string) => request<PreviewStatusResponse>(`/api/preview/${sessionId}/status`),
+  getPreviewStatus: (sessionId: string, aroundTimeMs = 0) =>
+    request<PreviewStatusResponse>(`/api/preview/${sessionId}/status?aroundTimeMs=${encodeURIComponent(String(aroundTimeMs))}`),
   saveSession: (sessionId: string) =>
     request<SessionSummary>(`/api/sessions/${sessionId}/save`, {
       method: 'POST'

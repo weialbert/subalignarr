@@ -46,6 +46,9 @@ export interface CuePreview {
 export interface PreviewStatusResponse {
   status: 'preparing' | 'ready' | 'error';
   streamUrl?: string;
+  directSourcePlayable?: boolean;
+  windowStartMs?: number;
+  windowEndMs?: number;
   errorMessage?: string;
 }
 
@@ -66,5 +69,6 @@ export interface HealthResponse {
     apiKeyConfigured: boolean;
     userIdConfigured: boolean;
     pathMappingCount: number;
+    ffmpegAvailable?: boolean;
   };
 }

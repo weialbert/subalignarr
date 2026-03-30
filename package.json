@@ -5,7 +5,7 @@
   "description": "Standalone subtitle alignment web app for Jellyfin libraries",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"tsx watch src/server/index.ts\" \"vite\"",
+    "dev": "concurrently \"tsx watch src/server/index.ts\" \"vite --host 0.0.0.0\"",
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",

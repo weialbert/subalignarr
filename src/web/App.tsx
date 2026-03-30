@@ -103,27 +103,38 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Standalone product</p>
+      <header className="app-topbar">
+        <div className="brand-block">
+          <p className="eyebrow">Anchor-based subtitle sync</p>
           <h1>subalignarr</h1>
-          <p className="hero-copy">
-            Browser-based subtitle timing adjustment for Jellyfin libraries, built for headless servers and non-destructive sidecar export.
-          </p>
+          <p className="hero-copy">Find a cue, match it to the media, apply a global offset, then verify and save.</p>
         </div>
-        <div className="status-card">
-          <p className="eyebrow">Backend status</p>
-          <p>{health ? `${health.mode} mode` : 'Checking...'}</p>
-          <p>{health ? `${health.config.pathMappingCount} path mapping(s)` : ''}</p>
+        <div className="utility-stack">
+          <div className="utility-card">
+            <p className="eyebrow">Backend</p>
+            <p>{health ? `${health.mode} mode` : 'Checking status...'}</p>
+          </div>
+          <div className="utility-card">
+            <p className="eyebrow">Mappings</p>
+            <p>{health ? `${health.config.pathMappingCount} configured` : '...'}</p>
+          </div>
+          {selectedMedia ? (
+            <div className="utility-card">
+              <p className="eyebrow">Active media</p>
+              <p>{selectedMedia.item.title}</p>
+            </div>
+          ) : null}
         </div>
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
-      {isOpeningItem ? <div className="status-banner">Opening item and loading subtitles...</div> : null}
+      {isOpeningItem ? <div className="status-banner">Opening media, loading subtitles, and preparing the workflow…</div> : null}
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid${session ? ' is-session-active' : ''}`}>
         <LibraryBrowser
+          activeMediaTitle={selectedMedia?.item.title ?? null}
           currentParentId={currentParentId}
+          hasActiveSession={Boolean(session)}
           isLoading={isLoadingItems}
           items={items}
           libraries={libraries}
@@ -138,14 +149,6 @@ export default function App() {
           session={session}
         />
       </div>
-
-      {selectedMedia ? (
-        <section className="footer-panel">
-          <p className="eyebrow">Current media</p>
-          <h3>{selectedMedia.item.title}</h3>
-          <p>{selectedMedia.subtitleTracks.length} external subtitle track(s) discovered.</p>
-        </section>
-      ) : null}
     </main>
   );
 }

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import express from 'express';
 import { applyOffset, getCuePreview } from './lib/alignment.js';
@@ -15,6 +16,7 @@ const config = loadConfig();
 const jellyfin = new JellyfinClient(config);
 const previews = new PreviewStore();
 const sessions = new SessionStore();
+const directPlaybackSupportCache = new Map<string, boolean>();
 
 app.use(express.json());
 
@@ -41,6 +43,64 @@ function inferMimeType(filePath: string): string {
   }
 }
 
+function isDirectPlaybackSupported(filePath: string): boolean {
+  const cacheKey = `${filePath}:${existsSync(filePath) ? String(requireStatSignature(filePath)) : 'missing'}`;
+  const cached = directPlaybackSupportCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== '.mp4' && extension !== '.webm') {
+    directPlaybackSupportCache.set(cacheKey, false);
+    return false;
+  }
+
+  const probe = spawnSync(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0,a:0',
+      '-show_entries',
+      'stream=codec_name,codec_type',
+      '-of',
+      'csv=p=0',
+      filePath
+    ],
+    { encoding: 'utf8' }
+  );
+
+  if (probe.status !== 0) {
+    directPlaybackSupportCache.set(cacheKey, false);
+    return false;
+  }
+
+  const codecs = probe.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [codecName, codecType] = line.split(',');
+      return { codecType, codecName };
+    });
+
+  const videoCodec = codecs.find((entry) => entry.codecType === 'video')?.codecName ?? '';
+  const audioCodec = codecs.find((entry) => entry.codecType === 'audio')?.codecName ?? '';
+  const supported =
+    (extension === '.mp4' && videoCodec === 'h264' && ['aac', 'mp3'].includes(audioCodec)) ||
+    (extension === '.webm' && ['vp8', 'vp9', 'av1'].includes(videoCodec) && ['opus', 'vorbis'].includes(audioCodec));
+
+  directPlaybackSupportCache.set(cacheKey, supported);
+  return supported;
+}
+
+function requireStatSignature(filePath: string): string {
+  const stats = statSync(filePath);
+  return `${stats.size}:${stats.mtimeMs}`;
+}
+
 async function streamFile(filePath: string, request: express.Request, response: express.Response): Promise<void> {
   const stats = await fs.stat(filePath);
   const range = request.headers.range;
@@ -63,7 +123,13 @@ async function streamFile(filePath: string, request: express.Request, response: 
   }
 
   const start = Number(match[1]);
-  const end = match[2] ? Number(match[2]) : stats.size - 1;
+  if (start >= stats.size) {
+    response.status(416).end();
+    return;
+  }
+
+  const requestedEnd = match[2] ? Number(match[2]) : stats.size - 1;
+  const end = Math.min(requestedEnd, stats.size - 1);
 
   response.writeHead(206, {
     'Content-Range': `bytes ${start}-${end}/${stats.size}`,
@@ -115,7 +181,8 @@ app.get('/api/health', (_request, response) => {
       baseUrlConfigured: Boolean(config.jellyfinBaseUrl),
       apiKeyConfigured: Boolean(config.jellyfinApiKey),
       userIdConfigured: Boolean(config.jellyfinUserId),
-      pathMappingCount: config.pathMappings.length
+      pathMappingCount: config.pathMappings.length,
+      ffmpegAvailable: previews.isFfmpegAvailable()
     }
   });
 });
@@ -261,20 +328,31 @@ app.get('/api/stream/:sessionId', async (request, response) => {
 app.get('/api/preview/:sessionId/status', async (request, response) => {
   try {
     const session = sessions.toSummary(request.params.sessionId);
+    const aroundTimeMs = Math.max(0, Math.trunc(Number(request.query.aroundTimeMs ?? 0) || 0));
     if (config.useMockData) {
       response.json({
         status: 'ready',
-        streamUrl: `/api/stream/${session.sessionId}`
+        streamUrl: `/api/stream/${session.sessionId}`,
+        directSourcePlayable: true,
+        windowStartMs: 0,
+        windowEndMs: session.media.item.durationMs
       });
       return;
     }
 
     const resolvedMediaPath = resolveLocalPath(session.media.mediaPath, config.pathMappings);
-    await previews.ensure(resolvedMediaPath);
-    const status = previews.getStatus(resolvedMediaPath);
+    const directSourcePlayable = isDirectPlaybackSupported(resolvedMediaPath);
+    await previews.ensure(resolvedMediaPath, aroundTimeMs);
+    const status = previews.getStatus(resolvedMediaPath, aroundTimeMs);
+    const streamUrl = status.status === 'ready' && status.previewPath
+      ? `/api/preview/${session.sessionId}?aroundTimeMs=${aroundTimeMs}&state=${status.status}&windowStartMs=${status.windowStartMs ?? 0}&windowEndMs=${status.windowEndMs ?? 0}`
+      : undefined;
     response.json({
       status: status.status,
-      streamUrl: status.status === 'ready' ? `/api/preview/${session.sessionId}` : undefined,
+      streamUrl,
+      directSourcePlayable,
+      windowStartMs: status.windowStartMs,
+      windowEndMs: status.windowEndMs,
       errorMessage: status.errorMessage
     });
   } catch (error) {
@@ -285,15 +363,16 @@ app.get('/api/preview/:sessionId/status', async (request, response) => {
 app.get('/api/preview/:sessionId', async (request, response) => {
   try {
     const session = sessions.toSummary(request.params.sessionId);
+    const aroundTimeMs = Math.max(0, Math.trunc(Number(request.query.aroundTimeMs ?? 0) || 0));
     if (config.useMockData) {
       await streamFile(path.join(process.cwd(), 'public', 'mock-video.mp4'), request, response);
       return;
     }
 
     const resolvedMediaPath = resolveLocalPath(session.media.mediaPath, config.pathMappings);
-    await previews.ensure(resolvedMediaPath);
-    const status = previews.getStatus(resolvedMediaPath);
-    if (status.status !== 'ready' || !status.previewPath) {
+    await previews.ensure(resolvedMediaPath, aroundTimeMs);
+    const status = previews.getStatus(resolvedMediaPath, aroundTimeMs);
+    if (!status.previewPath) {
       response.status(409).json({
         message: status.errorMessage ?? 'Preview is still preparing'
       });
@@ -315,5 +394,7 @@ if (existsSync(webDistPath)) {
 }
 
 app.listen(config.port, () => {
-  console.log(`subalignarr listening on http://localhost:${config.port}`);
+  console.log(
+    `subalignarr listening on http://localhost:${config.port} (mode=${config.useMockData ? 'mock' : 'live'}, ffmpeg=${previews.isFfmpegAvailable() ? 'available' : 'missing'})`
+  );
 });
