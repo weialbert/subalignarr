@@ -8,6 +8,7 @@ import path from 'node:path';
 interface PreviewRecord {
   sourcePath: string;
   previewPath: string;
+  temporaryPath: string;
   status: 'preparing' | 'ready' | 'error';
   errorMessage?: string;
   job?: Promise<void>;
@@ -33,6 +34,7 @@ export class PreviewStore {
       const readyRecord: PreviewRecord = {
         sourcePath,
         previewPath,
+        temporaryPath: `${previewPath}.tmp`,
         status: 'ready'
       };
       this.records.set(previewPath, readyRecord);
@@ -46,6 +48,7 @@ export class PreviewStore {
     const record: PreviewRecord = {
       sourcePath,
       previewPath,
+      temporaryPath: `${previewPath}.tmp`,
       status: 'preparing'
     };
     record.job = this.renderPreview(record);
@@ -113,10 +116,11 @@ export class PreviewStore {
       '2',
       '-movflags',
       '+faststart',
-      record.previewPath
+      record.temporaryPath
     ];
 
     try {
+      await fs.rm(record.temporaryPath, { force: true });
       await new Promise<void>((resolve, reject) => {
         const child = spawn('ffmpeg', args, { stdio: 'ignore' });
         child.on('error', reject);
@@ -130,9 +134,11 @@ export class PreviewStore {
         });
       });
 
+      await fs.rename(record.temporaryPath, record.previewPath);
       record.status = 'ready';
       delete record.errorMessage;
     } catch (error) {
+      await fs.rm(record.temporaryPath, { force: true }).catch(() => undefined);
       record.status = 'error';
       record.errorMessage = error instanceof Error ? error.message : 'Preview generation failed';
     }
