@@ -67,6 +67,7 @@ export function EditorPane({ media, onSelectTrack, session, onSessionChange, sel
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeVideoUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     setCueSearch('');
@@ -169,16 +170,33 @@ export function EditorPane({ media, onSelectTrack, session, onSessionChange, sel
       return;
     }
 
-    if (previewStatus?.status === 'ready' && previewStatus.streamUrl) {
-      if (video.src !== previewStatus.streamUrl) {
-        video.src = previewStatus.streamUrl;
-        video.load();
-      }
+    const fallbackUrl = `/api/stream/${session.sessionId}`;
+    const nextUrl =
+      previewStatus?.status === 'ready' && previewStatus.streamUrl
+        ? previewStatus.streamUrl
+        : fallbackUrl;
+
+    if (activeVideoUrlRef.current === nextUrl) {
       return;
     }
 
-    video.removeAttribute('src');
+    const previousTime = video.currentTime;
+    activeVideoUrlRef.current = nextUrl;
+    video.src = nextUrl;
     video.load();
+
+    const restoreTime = () => {
+      if (previousTime > 0) {
+        video.currentTime = previousTime;
+      }
+      video.removeEventListener('loadedmetadata', restoreTime);
+    };
+
+    video.addEventListener('loadedmetadata', restoreTime);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', restoreTime);
+    };
   }, [previewStatus, session]);
 
   if (!session) {
